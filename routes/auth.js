@@ -1,57 +1,70 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const generateToken = require("../utils/generateToken");
+const auth = require("../middleware/auth");
+const roleAuth = require("../middleware/role");
 
 const router = express.Router();
 
-// SIGNUP
+// ---------------- SIGNUP ----------------
 router.post("/signup", async (req, res) => {
-  const { username, email, password, role } = req.body;
-
+  const { name, email, password, role } = req.body;
   try {
     let user = await User.findOne({ email });
-    if (user) return res.status(400).json({ message: "User already exists" });
+    if (user) return res.status(400).json({ message: "Email already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    user = new User({
-      username,
+    user = await User.create({
+      name,
       email,
       password: hashedPassword,
       role: role || "user",
     });
 
-    await user.save();
-
     res.status(201).json({ message: "User registered successfully" });
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 });
 
-// LOGIN
+// ---------------- SIGNIN ----------------
 router.post("/signin", async (req, res) => {
   const { email, password, role } = req.body;
-
   try {
-    const user = await User.findOne({ email, role });
-    if (!user) return res.status(400).json({ message: "Invalid credentials" });
+    const user = await User.findOne({ email });
+    if (!user)
+      return res.status(400).json({ message: "Invalid email or password" });
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch)
-      return res.status(400).json({ message: "Invalid credentials" });
+      return res.status(400).json({ message: "Invalid email or password" });
 
-    const token = jwt.sign(
-      { id: user._id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN }
-    );
+    if (user.role !== role)
+      return res.status(403).json({ message: "Role mismatch" });
 
-    res.json({ token, role: user.role });
+    const token = generateToken(user._id, user.role);
+
+    res.json({
+      message: "Login successful",
+      token,
+      role: user.role,
+      name: user.name,
+    });
   } catch (err) {
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", error: err.message });
   }
+});
+
+// ---------------- PROTECTED ROUTE (User) ----------------
+router.get("/user-dashboard", auth, roleAuth(["user"]), (req, res) => {
+  res.json({ message: "Welcome to User Dashboard" });
+});
+
+// ---------------- PROTECTED ROUTE (Admin) ----------------
+router.get("/admin-dashboard", auth, roleAuth(["admin"]), (req, res) => {
+  res.json({ message: "Welcome to Admin Dashboard" });
 });
 
 module.exports = router;
